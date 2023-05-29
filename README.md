@@ -9,3 +9,15 @@
 2. Support EIP1559
 3. Does not support nonce reuse
 4. Support gas, gasprice
+
+## Single Test
+
+### EVM
+
+```shell
+tendermint init
+```
+
+```shell
+tendermint start --proxy_app=evmstore --rpc.grpc_laddr=tcp://0.0.0.0:9091
+```

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/agg-chain/aggchain/abci/example/code"
+	"github.com/agg-chain/aggchain/abci/example/evmstore/database"
 	"github.com/agg-chain/aggchain/abci/types"
 	"github.com/agg-chain/aggchain/libs/log"
 	"github.com/agg-chain/aggchain/version"
@@ -25,6 +26,7 @@ import (
 	"math/big"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -285,6 +287,19 @@ func (app *EVMApplication) Query(reqQuery types.RequestQuery) (resQuery types.Re
 		address.SetBytes(addressBytes)
 		nonce := app.state.evmStateDB.GetNonce(address)
 		value = []byte(strconv.FormatUint(nonce, 16))
+	} else if string(key) == "get_tx" {
+		logger.Debug("get_tx")
+		vs := strings.Split(string(value), "_")
+		start, _ := strconv.Atoi(vs[1])
+		end, _ := strconv.Atoi(vs[2])
+		txs, err := database.QueryRelationTxDetails(vs[0], vs[0], uint64(start), uint64(end))
+		if err != nil {
+			panic(err)
+		}
+		value, err = json.Marshal(txs)
+		if err != nil {
+			panic(err)
+		}
 	} else if string(key) == "eth_call" {
 		// 调用合约
 		logger.Debug("eth_call")
@@ -321,6 +336,16 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 	fromAddress, _ := evmtypes.Sender(app.state.signer, txInAgg)
 	app.state.evmStateDB.SetNonce(fromAddress, app.state.evmStateDB.GetNonce(fromAddress)+1)
 
+	// save to db
+	txDB := &database.TxDetailsInfo{
+		TxHeight: int32(app.state.Height + 1),
+		TxHash:   txInAgg.Hash().Hex(),
+		TxFrom:   fromAddress.Hex(),
+		TxTo:     txInAgg.To().Hex(),
+		TxValue:  txInAgg.Value().String(),
+		RawData:  string(txBytes),
+	}
+
 	// execute evm tx
 	_code := app.state.evmStateDB.GetCode(*txInAgg.To())
 	if len(_code) == 0 {
@@ -333,6 +358,10 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 				return nil, err
 			}
 			fmt.Printf("tx hash: %s\n", txInAgg.Hash().Hex())
+			err = database.InsertTxDetails(txDB)
+			if err != nil {
+				return nil, err
+			}
 			return txInAgg.Hash().Bytes(), nil
 		} else if txInAgg.To().String() == ZeroAddress {
 			// 处理创建合约交易
@@ -343,6 +372,10 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 				return nil, err
 			}
 			logger.Debug("Contract created. contract address: " + contractAddr.Hex())
+			err = database.InsertTxDetails(txDB)
+			if err != nil {
+				return nil, err
+			}
 			return contractAddr.Bytes(), nil
 		} else {
 			msg := fmt.Sprintf("Unknown tx")
@@ -359,6 +392,10 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 			return nil, errors.New(msg)
 		}
 		_ = fmt.Sprintf("tx hash: %s\n", txInAgg.Hash().Hex())
+		err = database.InsertTxDetails(txDB)
+		if err != nil {
+			return nil, err
+		}
 		return txInAgg.Hash().Bytes(), nil
 	}
 }
@@ -533,6 +570,36 @@ func (app *EVMApplication) recoverEVMStateDB() error {
 		}
 	}
 	return nil
+}
+
+func (app *EVMApplication) searchTxByAddress(address *common.Address) {
+	itr, err := app.state.db.Iterator(nil, nil)
+	if err != nil {
+		panic(err)
+	}
+	for ; itr.Valid(); itr.Next() {
+		if len(itr.Key()) >= len(evmTxsKey) && bytes.Equal(itr.Key()[:len(evmTxsKey)], evmTxsKey) && len(itr.Value()) > 0 {
+			if len(string(itr.Value())) < 2 {
+				logger.Error(fmt.Sprintf("recoverEVMStateDB error: %s", err.Error()))
+				continue
+			}
+			txInAgg, err := convertReqTx2EvmTx(itr.Value())
+			if err != nil {
+				logger.Error(fmt.Sprintf("recoverEVMStateDB error: %s", err.Error()))
+				continue
+			}
+			err = app.verifyEvmTx(txInAgg)
+			if err != nil {
+				logger.Error(fmt.Sprintf("recoverEVMStateDB error: %s", err.Error()))
+				continue
+			}
+			_, err = app.executeEvmTx(txInAgg)
+			if err != nil {
+				logger.Error(fmt.Sprintf("recoverEVMStateDB error: %s", err.Error()))
+				continue
+			}
+		}
+	}
 }
 
 func (app *EVMApplication) verifyEvmTx(agg *evmtypes.Transaction) error {

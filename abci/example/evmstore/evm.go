@@ -33,7 +33,7 @@ var (
 	evmTxsKey = []byte("evmtxskey0.1")
 
 	ChainName = "AGG"
-	ChainId   = big.NewInt(1)
+	ChainId   = big.NewInt(11000)
 
 	LevelDBName = "evmstore"
 	LevelDBDir  = ".leveldbdir"
@@ -219,7 +219,7 @@ func (app *EVMApplication) saveEVMState(tx []byte) error {
 
 func (app *EVMApplication) CheckTx(req types.RequestCheckTx) types.ResponseCheckTx {
 	txDataHex := string(req.Tx)
-	logger.Debug(fmt.Sprintf("execute evm tx. Tx data: %s", txDataHex))
+	logger.Debug(fmt.Sprintf("check evm tx. Tx data: %s", txDataHex))
 
 	if len(txDataHex) < 2 {
 		return types.ResponseCheckTx{Code: code.CodeTypeEncodingError, GasWanted: 1, Info: "txDataHex length error"}
@@ -332,7 +332,8 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 			if err != nil {
 				return nil, err
 			}
-			return nil, nil
+			fmt.Printf("tx hash: %s\n", txInAgg.Hash().Hex())
+			return txInAgg.Hash().Bytes(), nil
 		} else if txInAgg.To().String() == ZeroAddress {
 			// 处理创建合约交易
 			logger.Debug("Create contract tx")
@@ -351,13 +352,14 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 	} else {
 		// 执行合约
 		logger.Debug("Execute contract result")
-		result, err := app.callContractTx(app.state.evmStateDB, txInAgg)
+		_, err := app.callContractTx(app.state.evmStateDB, txInAgg)
 		if err != nil {
 			msg := fmt.Sprintf("Contract execute error: " + err.Error())
 			logger.Error(msg)
 			return nil, errors.New(msg)
 		}
-		return result, nil
+		_ = fmt.Sprintf("tx hash: %s\n", txInAgg.Hash().Hex())
+		return txInAgg.Hash().Bytes(), nil
 	}
 }
 

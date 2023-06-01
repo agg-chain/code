@@ -38,6 +38,7 @@ func init() {
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
 		host, user, password, name, port)
 	db, err = sql.Open("postgres", dsn)
+	err = db.Ping()
 	if err != nil {
 		logger.Error(err.Error())
 		logger.Info("db config is wrong. Skip save to db task!")

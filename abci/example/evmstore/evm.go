@@ -37,7 +37,7 @@ var (
 	ChainName = "AGG"
 	ChainId   = big.NewInt(11000)
 
-	LevelDBName = "evmstore"
+	LevelDBName = os.Getenv("LEVEL_DB_NAME")
 	LevelDBDir  = ".leveldbdir"
 
 	ProtocolVersion uint64 = 0x1
@@ -104,6 +104,7 @@ func saveState(state State) {
 		panic(err)
 	}
 	err = state.db.Set(stateKey, stateBytes)
+	state.Size++
 	if err != nil {
 		panic(err)
 	}
@@ -144,7 +145,7 @@ func (app *EVMApplication) Info(req types.RequestInfo) (resInfo types.ResponseIn
 
 func (app *EVMApplication) DeliverTx(req types.RequestDeliverTx) types.ResponseDeliverTx {
 	if len(string(req.Tx)) < 2 {
-		msg := fmt.Sprintf("executeEvmTx error: %s", err.Error())
+		msg := fmt.Sprintf("executeEvmTx error. Tx error: %s", string(req.Tx))
 		logger.Error(msg)
 		return types.ResponseDeliverTx{Code: code.CodeTypeUnknownError, Info: msg}
 	}
@@ -168,7 +169,6 @@ func (app *EVMApplication) DeliverTx(req types.RequestDeliverTx) types.ResponseD
 		return types.ResponseDeliverTx{Code: code.CodeTypeUnknownError, Info: msg}
 	}
 
-	app.state.Size++
 	events := []types.Event{
 		{
 			Type: "app",
@@ -212,6 +212,7 @@ func (app *EVMApplication) saveEVMState(tx []byte) error {
 	logger.Debug("saveEVMState")
 	key := append(evmTxsKey, []byte(strconv.FormatInt(time.Now().UnixNano(), 10))...)
 	err = app.state.db.Set(key, tx)
+	app.state.Size++
 	if err != nil {
 		return err
 	}

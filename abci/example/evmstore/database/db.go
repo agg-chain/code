@@ -22,11 +22,11 @@ var (
 	enableSaveDb = false
 	db           *sql.DB
 	err          error
-	host         = os.Getenv("db.host")
-	user         = os.Getenv("db.user")
-	password     = os.Getenv("db.password")
-	name         = os.Getenv("db.name")
-	port         = os.Getenv("db.port")
+	host         = os.Getenv("dbhost")
+	user         = os.Getenv("dbuser")
+	password     = os.Getenv("dbpassword")
+	name         = os.Getenv("dbname")
+	port         = os.Getenv("dbport")
 )
 
 func init() {

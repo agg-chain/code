@@ -46,14 +46,14 @@ func QueryRelationTxDetails(from, to string, start, end uint64) ([]*TxDetailsInf
 		return nil, nil
 	}
 	var txs []*TxDetailsInfo
-	rows, err := db.Query("SELECT id,tx_hash,tx_height,tx_from,tx_to,tx_value FROM tx_details where tx_from = $1 or tx_to = $2 order by id limit $3 offset $4", from, to, end, start)
+	rows, err := db.Query("SELECT id,tx_hash,tx_height,tx_from,tx_to,tx_value,raw_data FROM tx_details where tx_from = $1 or tx_to = $2 order by id limit $3 offset $4", from, to, end, start)
 	if err != nil {
 		return nil, err
 	}
 
 	for rows.Next() {
 		tx := &TxDetailsInfo{}
-		err = rows.Scan(&tx.Id, &tx.TxHash, &tx.TxHeight, &tx.TxFrom, &tx.TxTo, &tx.TxValue)
+		err = rows.Scan(&tx.Id, &tx.TxHash, &tx.TxHeight, &tx.TxFrom, &tx.TxTo, &tx.TxValue, &tx.RawData)
 		if err != nil {
 			continue
 		}

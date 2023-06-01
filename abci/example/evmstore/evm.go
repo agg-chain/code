@@ -357,7 +357,7 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 			if err != nil {
 				return nil, err
 			}
-			fmt.Printf("tx hash: %s\n", txInAgg.Hash().Hex())
+			logger.Debug("tx hash: " + txInAgg.Hash().Hex())
 			err = database.InsertTxDetails(txDB)
 			if err != nil {
 				return nil, err
@@ -391,7 +391,7 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 			logger.Error(msg)
 			return nil, errors.New(msg)
 		}
-		_ = fmt.Sprintf("tx hash: %s\n", txInAgg.Hash().Hex())
+		logger.Debug("tx hash: " + txInAgg.Hash().Hex())
 		err = database.InsertTxDetails(txDB)
 		if err != nil {
 			return nil, err

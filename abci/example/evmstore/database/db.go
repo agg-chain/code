@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/agg-chain/aggchain/libs/log"
 	_ "github.com/lib/pq"
 	"os"
 )
@@ -19,6 +20,7 @@ type TxDetailsInfo struct {
 }
 
 var (
+	logger       log.Logger
 	enableSaveDb = false
 	db           *sql.DB
 	err          error
@@ -30,12 +32,15 @@ var (
 )
 
 func init() {
+	logger = log.NewTMLogger(log.NewSyncWriter(os.Stdout))
+	logger = logger.With("module", "evmstore")
+
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
 		host, user, password, name, port)
 	db, err = sql.Open("postgres", dsn)
 	if err != nil {
-		println(err.Error())
-		println("db config is wrong. Skip save to db task!")
+		logger.Error(err.Error())
+		logger.Info("db config is wrong. Skip save to db task!")
 		return
 	}
 	enableSaveDb = true

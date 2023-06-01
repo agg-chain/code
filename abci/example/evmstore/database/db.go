@@ -33,7 +33,7 @@ var (
 
 func init() {
 	logger = log.NewTMLogger(log.NewSyncWriter(os.Stdout))
-	logger = logger.With("module", "evmstore")
+	logger = logger.With("module", "evmdatabase")
 
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
 		host, user, password, name, port)
@@ -44,6 +44,7 @@ func init() {
 		return
 	}
 	enableSaveDb = true
+	logger.Info("enable db")
 }
 
 func QueryRelationTxDetails(from, to string, start, end uint64) ([]*TxDetailsInfo, error) {

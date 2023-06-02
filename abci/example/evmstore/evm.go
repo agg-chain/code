@@ -68,7 +68,6 @@ type State struct {
 	AppHash []byte `json:"app_hash"`
 
 	// EVM state
-	ethStateDb  state.Database
 	nextTxNum   *big.Int
 	evmStateDB  *state.StateDB
 	signer      evmtypes.Signer
@@ -216,7 +215,6 @@ func (app *EVMApplication) saveEVMState(tx []byte) error {
 	if err != nil {
 		return err
 	}
-	app.state.nextTxNum = app.state.nextTxNum.Add(app.state.nextTxNum, big.NewInt(1))
 	return nil
 }
 
@@ -349,6 +347,10 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 		TxTo:     txInAgg.To().Hex(),
 		TxValue:  txInAgg.Value().String(),
 		RawData:  string(txBytes),
+		Gas: &database.Gas{
+			GasPrice: txInAgg.GasPrice().String(),
+			GasLimit: txInAgg.Gas(),
+		},
 	}
 
 	// execute evm tx
@@ -357,12 +359,22 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 		// 非合约调用
 		if len(txInAgg.Data()) == 0 {
 			// 处理主代币
+			mainTokenGas := uint64(21000)
 			logger.Debug("Main token tx")
+			if txInAgg.Gas() != mainTokenGas {
+				msg := "invalid gas. AGG transfer need 21000 gas"
+				logger.Error(msg)
+				return nil, errors.New(msg)
+			}
 			err = app.handleMainTokenTx(app.state.evmStateDB, txInAgg)
 			if err != nil {
 				return nil, err
 			}
 			logger.Debug("tx hash: " + txInAgg.Hash().Hex())
+			// sub fee from sender
+			subFee(app.state, fromAddress, int64(mainTokenGas), txInAgg.GasPrice())
+			// insert tx to db
+			txDB.Gas.GasUsed = mainTokenGas
 			err = database.InsertTxDetails(txDB)
 			if err != nil {
 				return nil, err
@@ -371,12 +383,16 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 		} else if txInAgg.To().String() == ZeroAddress {
 			// 处理创建合约交易
 			logger.Debug("Create contract tx")
-			contractAddr, err := createContractTx(app.state.evmStateDB, txInAgg)
+			contractAddr, leftGas, err := app.createContractTx(app.state.evmStateDB, txInAgg)
 			if err != nil {
 				logger.Debug("Contract create error: " + err.Error())
 				return nil, err
 			}
 			logger.Debug("Contract created. contract address: " + contractAddr.Hex())
+			// sub fee from sender
+			subFee(app.state, fromAddress, int64(txInAgg.Gas()-leftGas), txInAgg.GasPrice())
+			// insert tx to db
+			txDB.Gas.GasUsed = txInAgg.Gas() - leftGas
 			err = database.InsertTxDetails(txDB)
 			if err != nil {
 				return nil, err
@@ -390,19 +406,32 @@ func (app *EVMApplication) executeEvmTx(txInAgg *evmtypes.Transaction) ([]byte, 
 	} else {
 		// 执行合约
 		logger.Debug("Execute contract result")
-		_, err := app.callContractTx(app.state.evmStateDB, txInAgg)
+		_, leftOverGas, err := app.callContractTx(app.state.evmStateDB, txInAgg)
 		if err != nil {
 			msg := fmt.Sprintf("Contract execute error: " + err.Error())
 			logger.Error(msg)
 			return nil, errors.New(msg)
 		}
 		logger.Debug("tx hash: " + txInAgg.Hash().Hex())
+		// sub fee from sender
+		subFee(app.state, fromAddress, int64(txInAgg.Gas()-leftOverGas), txInAgg.GasPrice())
+		// insert tx to db
+		txDB.Gas.GasUsed = txInAgg.Gas() - leftOverGas
 		err = database.InsertTxDetails(txDB)
 		if err != nil {
 			return nil, err
 		}
 		return txInAgg.Hash().Bytes(), nil
 	}
+}
+
+func subFee(state State, fromAddress common.Address, gasUsed int64, gasPrice *big.Int) {
+	logger.Debug("fromAddress: " + fromAddress.Hex())
+	tmp := big.NewInt(0)
+	fromAddressBalance := state.evmStateDB.GetBalance(fromAddress)
+	fee := tmp.Mul(gasPrice, big.NewInt(gasUsed))
+	logger.Debug("fee: " + fee.String())
+	state.evmStateDB.SetBalance(fromAddress, tmp.Sub(fromAddressBalance, fee))
 }
 
 // github.com/ethereum/go-ethereum@v1.12.0/core/txpool/txpool.go:600
@@ -469,13 +498,15 @@ func (app *EVMApplication) validateTx(tx *evmtypes.Transaction) error {
 	return nil
 }
 
-func createContractTx(evmState *state.StateDB, txInAgg *evmtypes.Transaction) (common.Address, error) {
-	ret, contractAddr, leftGas, err := runtime.Create(txInAgg.Data(), &runtime.Config{
-		State: evmState,
+func (app *EVMApplication) createContractTx(evmState *state.StateDB, txInAgg *evmtypes.Transaction) (common.Address, uint64, error) {
+	_, contractAddr, leftGas, err := runtime.Create(txInAgg.Data(), &runtime.Config{
+		ChainConfig: app.state.chainConfig,
+		GasLimit:    txInAgg.Gas(),
+		GasPrice:    txInAgg.GasPrice(),
+		Value:       txInAgg.Value(),
+		State:       evmState,
 	})
-	_ = leftGas
-	_ = ret
-	return contractAddr, err
+	return contractAddr, leftGas, err
 }
 
 // callContractTx only execute contract and don't update state
@@ -483,6 +514,9 @@ func (app *EVMApplication) executeContractTx(evmState *state.StateDB, txInAgg *e
 	ret, _, err := runtime.Call(*txInAgg.To, txInAgg.Data,
 		&runtime.Config{
 			ChainConfig: app.state.chainConfig,
+			GasLimit:    txInAgg.Gas,
+			GasPrice:    txInAgg.GasPrice,
+			Value:       txInAgg.Value,
 			State:       evmState,
 		},
 	)
@@ -490,8 +524,8 @@ func (app *EVMApplication) executeContractTx(evmState *state.StateDB, txInAgg *e
 }
 
 // callContractTx call contract and update state
-func (app *EVMApplication) callContractTx(evmState *state.StateDB, txInAgg *evmtypes.Transaction) ([]byte, error) {
-	ret, _, err := runtime.Call(*txInAgg.To(), txInAgg.Data(),
+func (app *EVMApplication) callContractTx(evmState *state.StateDB, txInAgg *evmtypes.Transaction) ([]byte, uint64, error) {
+	ret, leftOverGas, err := runtime.Call(*txInAgg.To(), txInAgg.Data(),
 		&runtime.Config{
 			ChainConfig: app.state.chainConfig,
 			GasLimit:    txInAgg.Gas(),
@@ -500,7 +534,7 @@ func (app *EVMApplication) callContractTx(evmState *state.StateDB, txInAgg *evmt
 			State:       evmState,
 		},
 	)
-	return ret, err
+	return ret, leftOverGas, err
 }
 
 func (app *EVMApplication) handleMainTokenTx(evmState *state.StateDB, txInAgg *evmtypes.Transaction) error {
@@ -519,7 +553,6 @@ func (app *EVMApplication) handleMainTokenTx(evmState *state.StateDB, txInAgg *e
 }
 
 func (app *EVMApplication) recoverEVMStateDB() error {
-	app.state.nextTxNum = big.NewInt(0)
 	app.state.signer = evmtypes.NewLondonSigner(ChainId)
 	app.state.chainConfig = &params.ChainConfig{
 		ChainID:             ChainId,

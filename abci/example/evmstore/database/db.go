@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/agg-chain/aggchain/libs/json"
 	"github.com/agg-chain/aggchain/libs/log"
 	_ "github.com/lib/pq"
 	"os"
@@ -17,6 +18,13 @@ type TxDetailsInfo struct {
 	RawData  string `json:"raw_data,omitempty"`
 	TxValue  string `json:"tx_value,omitempty"`
 	TxHeight int32  `json:"tx_height,omitempty"`
+	Gas      *Gas   `json:"gas,omitempty"`
+}
+
+type Gas struct {
+	GasPrice string `json:"gas_price,omitempty"`
+	GasLimit uint64 `json:"gas_limit,omitempty"`
+	GasUsed  uint64 `json:"gas_used,omitempty"`
 }
 
 var (
@@ -53,15 +61,23 @@ func QueryRelationTxDetails(from, to string, start, end uint64) ([]*TxDetailsInf
 		return nil, nil
 	}
 	var txs []*TxDetailsInfo
-	rows, err := db.Query("SELECT id,tx_hash,tx_height,tx_from,tx_to,tx_value,raw_data FROM tx_details where tx_from = $1 or tx_to = $2 order by id limit $3 offset $4", from, to, end, start)
+	rows, err := db.Query("SELECT id,tx_hash,tx_height,tx_from,tx_to,tx_value,raw_data,gas FROM tx_details where tx_from = $1 or tx_to = $2 order by id limit $3 offset $4", from, to, end, start)
 	if err != nil {
+		logger.Error(err.Error())
 		return nil, err
 	}
 
 	for rows.Next() {
 		tx := &TxDetailsInfo{}
-		err = rows.Scan(&tx.Id, &tx.TxHash, &tx.TxHeight, &tx.TxFrom, &tx.TxTo, &tx.TxValue, &tx.RawData)
+		gasJson := ""
+		err = rows.Scan(&tx.Id, &tx.TxHash, &tx.TxHeight, &tx.TxFrom, &tx.TxTo, &tx.TxValue, &tx.RawData, &gasJson)
 		if err != nil {
+			logger.Error(err.Error())
+			continue
+		}
+		err = json.Unmarshal([]byte(gasJson), &tx.Gas)
+		if err != nil {
+			logger.Error(err.Error())
 			continue
 		}
 		txs = append(txs, tx)
@@ -85,19 +101,29 @@ func InsertTxDetails(tx *TxDetailsInfo) error {
 		countAll := db.QueryRow("SELECT count(*) FROM tx_details")
 		countAllRes := 0
 		err := countAll.Scan(&countAllRes)
+		marshal, err := json.Marshal(tx.Gas)
+		if err != nil {
+			return err
+		}
 		res, err = db.Exec(
-			"INSERT INTO tx_details(id,tx_hash,tx_height,tx_from,tx_to,tx_value,raw_data) VALUES($1,$2,$3,$4,$5,$6,$7)",
-			countAllRes+1, tx.TxHash, tx.TxHeight, tx.TxFrom, tx.TxTo, tx.TxValue, tx.RawData)
+			"INSERT INTO tx_details(id,tx_hash,tx_height,tx_from,tx_to,tx_value,raw_data,gas) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+			countAllRes+1, tx.TxHash, tx.TxHeight, tx.TxFrom, tx.TxTo, tx.TxValue, tx.RawData, string(marshal))
 		if err != nil {
 			return err
 		}
 	} else {
-		stmt, err := db.Prepare("UPDATE tx_details SET tx_height=$1,tx_from=$2,tx_to=$3,tx_value=$4,raw_data=$5 WHERE tx_hash = $6")
+		stmt, err := db.Prepare("UPDATE tx_details SET tx_height=$1,tx_from=$2,tx_to=$3,tx_value=$4,raw_data=$5,gas=$6 WHERE tx_hash = $7")
 		if err != nil {
 			return err
 		}
-
-		res, err = stmt.Exec(tx.TxHeight, tx.TxFrom, tx.TxTo, tx.TxValue, tx.RawData, tx.TxHash)
+		marshal, err := json.Marshal(tx.Gas)
+		if err != nil {
+			return err
+		}
+		res, err = stmt.Exec(tx.TxHeight, tx.TxFrom, tx.TxTo, tx.TxValue, tx.RawData, string(marshal), tx.TxHash)
+		if err != nil {
+			return err
+		}
 	}
 	affected, err := res.RowsAffected()
 	if err != nil {

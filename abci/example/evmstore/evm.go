@@ -225,22 +225,26 @@ func (app *EVMApplication) CheckTx(req types.RequestCheckTx) types.ResponseCheck
 	logger.Debug(fmt.Sprintf("check evm tx. Tx data: %s", txDataHex))
 
 	if len(txDataHex) < 2 {
+		logger.Error(fmt.Sprintf("txDataHex length less 2. txDataHex: %s", err.Error()))
 		return types.ResponseCheckTx{Code: code.CodeTypeEncodingError, GasWanted: 1, Info: "txDataHex length error"}
 	}
 
 	txInAgg := &evmtypes.Transaction{}
 	rawTxBytes, err := hex.DecodeString(txDataHex[2:])
 	if err != nil {
+		logger.Error(fmt.Sprintf("DecodeString hex tx error: %s", err.Error()))
 		return types.ResponseCheckTx{Code: code.CodeTypeEncodingError, GasWanted: 1, Info: "decodeString error"}
 	}
 	err = txInAgg.UnmarshalBinary(rawTxBytes)
 	if err != nil {
+		logger.Error(fmt.Sprintf("UnmarshalBinary tx error: %s", err.Error()))
 		return types.ResponseCheckTx{Code: code.CodeTypeEncodingError, GasWanted: 1, Info: "unmarshalBinary error"}
 	}
 
 	// verify tx
 	err = app.verifyEvmTx(txInAgg)
 	if err != nil {
+		logger.Error(fmt.Sprintf("verifyEvmTx error: %s", err.Error()))
 		return types.ResponseCheckTx{Code: code.CodeTypeEncodingError, GasWanted: 1, Info: "verifyEvmTx error: " + err.Error()}
 	}
 
